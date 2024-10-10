@@ -7,6 +7,7 @@ Detector::Detector(const std::string& path_to_ini)
     obs = Observer(path_to_ini);
 }
 
+
 bool Detector::get_ini_params(const string& config)
 {
     std::cout << "BEGIN get_ini_params" << std::endl;
@@ -48,8 +49,24 @@ bool Detector::get_ini_params(const string& config)
     return 1;
 } // -- END
 
-void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image){
-    // для ИК поменял на >=
+
+cv::Mat Detector::getGPUfilteredRingImage(const cv::Mat& GrayImage){
+    DataAfterGPU = GPUCalc((unsigned char*)GrayImage.data, GrayImage.rows, GrayImage.cols, PUD, DELTA_INTENS);
+
+    cv::Mat GPUFiltredImage = cv::Mat(
+                                GrayImage.rows,
+                                GrayImage.cols,
+                                CV_8UC1,
+                                DataAfterGPU
+                        );
+//    cv::imshow("f", GPUFiltredImage);
+//    cv::waitKey(0);
+
+    return GPUFiltredImage;
+}
+
+
+void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image, const int offset_X, const int offset_Y){
     using cor_it = std::vector<cv::Point>::iterator;
     std::vector<cv::Point> for_delete;
 
@@ -67,7 +84,8 @@ void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image){
         for(std::vector<Local_Point>::iterator j = copy.begin(); j != copy.end(); ++j){
         if(j->down == false && i->down == false && i->p != j->p){
             if( (j->p.x > i->p.x-NMSwindow && j->p.x < i->p.x+NMSwindow) && (j->p.y > i->p.y-NMSwindow && j->p.y < i->p.y+NMSwindow) ){
-                    if(image.at<uchar>(i->p) >= image.at<uchar>(j->p)){
+                if(image.at<uchar>({i->p.x - offset_X, i->p.y - offset_Y}) >=
+                        image.at<uchar>(j->p.x - offset_X, j->p.y - offset_Y)){
                         for_delete.push_back(j->p);
                         j->down = true;
                     }
@@ -86,46 +104,20 @@ void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image){
     }
 }
 
-void Detector::FilterRing(const cv::Mat& GrayImage, const cv::Mat& GrayImageNonCrop, const int offset_X, const int offset_Y,
-                          std::vector<cv::Point>& find_points){
 
-    cv::Mat thirdMask(GrayImage.rows, GrayImage.cols, CV_8UC1, cv::Scalar(0));
-    for(int i=PUD; i!= GrayImage.cols-PUD; i++){
-        for(int j=PUD; j!= GrayImage.rows-PUD; j++){
-            float M = 0;
-
-            for(int l = -PUD; l != PUD + 1; l++){
-                M += GrayImage.at<uchar>(j - PUD, i + l);
-            }
-            for(int l = -PUD; l != PUD + 1; l++){
-                M += GrayImage.at<uchar>(j + PUD, i + l);
-            }
-
-            for(int l = -PUD+1; l != PUD; l++){
-                M += GrayImage.at<uchar>(j + l, i - PUD);
-            }
-            for(int l = -PUD+1; l != PUD; l++){
-                M += GrayImage.at<uchar>(j + l, i + PUD);
-            }
-
-            M = M/( (4*PUD + 2) + (4*PUD - 4));
-
-            if(std::abs(M - GrayImage.at<uchar>(j, i)) >= DELTA_INTENS){
-                thirdMask.at<uchar>(j, i) = 255;
-            }
-        }
-    }
-
-    find_points.reserve(300);
+void Detector::FilterRing(const cv::Mat& GrayImage, const int offset_X, const int offset_Y, std::vector<cv::Point>& find_points){
+    find_points.reserve(100);
     for(int i=0; i!= GrayImage.rows; i++){
         for(int j=0; j!= GrayImage.cols; j++){
-            if(thirdMask.at<uchar>(i, j) !=0){
+            if(GrayImage.at<uchar>(i, j) !=0){
                find_points.push_back({j + offset_X, i + offset_Y});
             }
         }
     }
 
-    NMS(find_points, GrayImageNonCrop);
+//    if(find_points.size() != 0){
+//        NMS(find_points, GrayImage, offset_X, offset_Y);
+//    }
 }
 
 
@@ -206,27 +198,10 @@ void Detector::FilterRowColRing(const cv::Mat& GrayImage, const cv::Point& coor_
 }
 
 
-std::vector<cv::Point> Detector::getRingPoints(const cv::Mat& GrayImage){
-    auto start = std::chrono::high_resolution_clock::now();
-
-//    unsigned char* DataAfterFiltered = GPUCalc((unsigned char*)GrayImage.data, GrayImage.rows, GrayImage.cols, 5, 40);
-
-//    cv::Mat GPUFiltredImage = cv::Mat(
-//                                GrayImage.rows,
-//                                GrayImage.cols,
-//                                CV_8UC1,
-//                                DataAfterFiltered
-//                        );
-////    cv::imshow("fff", GPUFiltredImage);
-//    std::vector<cv::Point> f;
-////    FilterRing(GrayImage, GrayImage, GrayImage.cols, GrayImage.rows, f);
-
-////    cv::waitKey(1);
-//    free(DataAfterFiltered);
-
-    static const int num_of_threads = num_of_threads_x * num_of_threads_y; // оптимальная работа моих алгоритмов с максимальным числом потоков
-    static const int width_of_el_x = GrayImage.cols/num_of_threads_x;
-    static const int width_of_el_y = GrayImage.rows/num_of_threads_y;
+std::vector<cv::Point> Detector::getCPUfilteredPoints(const cv::Mat& GPUfilteredImage){
+    static const int num_of_threads = num_of_threads_x * num_of_threads_y;
+    static const int width_of_el_x = GPUfilteredImage.cols/num_of_threads_x;
+    static const int width_of_el_y = GPUfilteredImage.rows/num_of_threads_y;
 
     std::vector<std::thread> threads(num_of_threads-1);
     std::vector <std::vector<cv::Point> > results_for_each_thread(num_of_threads);
@@ -236,17 +211,17 @@ std::vector<cv::Point> Detector::getRingPoints(const cv::Mat& GrayImage){
         for(int j=0; j!=num_of_threads_y; j++){
             if(counter == num_of_threads-1){ break; }
             cv::Rect mask(i*width_of_el_x, j*width_of_el_y, width_of_el_x, width_of_el_y);
-            cv::Mat masked_gray_image = GrayImage(mask);
-            threads[counter] = std::thread(&Detector::FilterRing, this, masked_gray_image, GrayImage, width_of_el_x*i, width_of_el_y*j,
+            cv::Mat MaskedGPUfilteredImage = GPUfilteredImage(mask);
+            threads[counter] = std::thread(&Detector::FilterRing, this, MaskedGPUfilteredImage, width_of_el_x*i, width_of_el_y*j,
                                            std::ref(results_for_each_thread[counter]));
             counter++;
         }
     }
-    cv::Mat last_image = GrayImage(cv::Rect{width_of_el_x*(num_of_threads_x-1), width_of_el_y*(num_of_threads_y-1),
+    cv::Mat LastMaskedGPUfilteredImage = GPUfilteredImage(cv::Rect{width_of_el_x*(num_of_threads_x-1), width_of_el_y*(num_of_threads_y-1),
                                             width_of_el_x, width_of_el_y});
+    FilterRing(LastMaskedGPUfilteredImage, width_of_el_x*(num_of_threads_x-1), width_of_el_y*(num_of_threads_y-1),
+                  results_for_each_thread[num_of_threads-1]);
 
-    FilterRing(last_image, GrayImage, width_of_el_x*(num_of_threads_x-1), width_of_el_y*(num_of_threads_y-1),
-              results_for_each_thread[num_of_threads-1]);
     for(auto& entry : threads){
         entry.join();
     }
@@ -259,9 +234,14 @@ std::vector<cv::Point> Detector::getRingPoints(const cv::Mat& GrayImage){
         }
     }
 
-//    qDebug() << "size before " << find_points.size();
-//    NMS(find_points, GrayImage);
-//    qDebug() << "size after " << find_points.size();
+    return find_points;
+}
+
+std::vector<cv::Point> Detector::getRingPoints(const cv::Mat& GrayImage){
+    auto start = std::chrono::high_resolution_clock::now();
+
+    cv::Mat GPUfilteredImage = getGPUfilteredRingImage(GrayImage);
+    std::vector<cv::Point> find_points = getCPUfilteredPoints(GPUfilteredImage);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -339,16 +319,21 @@ void Detector::getRowColRingPoints(const cv::Mat& GrayImage, std::vector<cv::Poi
 }
 
 
+void Detector::clearDataAfterGPU(){
+    free(DataAfterGPU);
+}
+
+
 void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
     // в FilterRowColRing у RowCol Sko= sko_porog-2
     std::vector<cv::Point> find_points = getRingPoints(GrayImage);
-    NMS(find_points, GrayImage);
     getRowColRingPoints(GrayImage, find_points);
 
-    obs.ProcessPoints(find_points);
-    obs.drawObjects(ColorImage);
+//    obs.ProcessPoints(find_points);
+//    obs.drawObjects(ColorImage);
 
     for(auto& p : find_points){
         cv::circle(ColorImage, p, 3, cv::Scalar(0,0,255));
     }
+    clearDataAfterGPU();
 }

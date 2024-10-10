@@ -26,16 +26,20 @@ private:
     int DELTA_INTENS;
     int SKO_POROG;
     int width_of_el_RowColRingPoints;
+    unsigned char* DataAfterGPU;
 
     Observer obs;
 
     cv::Rect getMask(int, int, cv::Point, int);
-    void NMS(std::vector<cv::Point>&, const cv::Mat&);
-    void FilterRing(const cv::Mat&, const cv::Mat&, const int, const int, std::vector<cv::Point>&);
+    void NMS(std::vector<cv::Point>&, const cv::Mat&, const int, const int);
+    cv::Mat getGPUfilteredRingImage(const cv::Mat&);
+    std::vector<cv::Point> getCPUfilteredPoints(const cv::Mat&);
+    void FilterRing(const cv::Mat&, const int, const int, std::vector<cv::Point>&);
     void FilterRowColRing(const cv::Mat&, const cv::Point&, char&);
     std::vector<cv::Point> getRingPoints(const cv::Mat&);
     void getRowColRingPoints(const cv::Mat&, std::vector<cv::Point>&);
     bool get_ini_params(const std::string&);
+    void clearDataAfterGPU();
 public:
     Detector(const std::string&);
 

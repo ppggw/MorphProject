@@ -10,6 +10,7 @@ SOURCES += \
         observer.cpp \
 
 HEADERS += \
+    cuda_calc.cu \
     INIReader.h \
     cuda_header.h \
     detector.h \
@@ -41,7 +42,7 @@ CUDA_OBJECTS_DIR = OBJECTS_DIR/../cuda
 # OTHER_FILES += \
 #     vectorAdd.cu
 CUDA_SOURCES += \
-    cuda_first.cu
+    cuda_calc.cu
 
 #-------------------------------------------------
 
