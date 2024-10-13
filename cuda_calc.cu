@@ -1,16 +1,20 @@
 #include <stdio.h>
 #include <math.h>
+#include "cuda_header.h"
 #include "cuda_runtime.h"
 
-#include "cuda_header.h"
+#include <vector>
+#include <iostream>
 
 #include "opencv2/opencv.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
 
-__global__ void RingFilterGPU(unsigned char* ImageData, unsigned char* d_ResultImage, int rows,
-                                int cols, int pud, int threshold)
+__device__ int mLock = 0;
+
+__global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vectorY,
+                              int* counter, int rows, int cols, int pud, int threshold)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -22,7 +26,6 @@ __global__ void RingFilterGPU(unsigned char* ImageData, unsigned char* d_ResultI
         y < pud + 1
     )
     {
-        d_ResultImage[y * cols + x] = (unsigned char)0;
         return;
     }
 
@@ -40,15 +43,22 @@ __global__ void RingFilterGPU(unsigned char* ImageData, unsigned char* d_ResultI
     M = M/( (4*pud + 2) + (4*pud - 4) );
 
     if(abs(ImageData[y * cols + x] - M) >= threshold){
-        d_ResultImage[y * cols + x] = (unsigned char)255;
+        bool blocked = true;
+        while(blocked) {
+            if(0 == atomicCAS(&mLock, 0, 1)) {
+                vectorX[*counter] = x;
+                vectorY[*counter] = y;
+                *counter+=1;
+                atomicExch(&mLock, 0);
+                blocked = false;
+            }
+        }
     }
-    else{
-        d_ResultImage[y * cols + x] = (unsigned char)0;
-    }
+    __syncthreads();
 }
 
 
-extern "C" unsigned char* GPUCalc(unsigned char* ImageData, int rows, int cols, int pud, int threshold){
+extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, int pud, int threshold){
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -59,27 +69,46 @@ extern "C" unsigned char* GPUCalc(unsigned char* ImageData, int rows, int cols, 
 //    for (int i = 0; i < NUM_STREAMS; i++) { cudaStreamCreate(&streams[i]); }
 
     unsigned char *dev_Image;
-    unsigned char *dev_Result_Image;
+    int* dev_X;
+    int* dev_Y;
+
+    int* DevCounter;
+    int state = 0;
 
     cudaMalloc((void**)&dev_Image, sizeof(unsigned char) * cols * rows);
-    cudaMalloc((void**)&dev_Result_Image, sizeof(unsigned char) * cols * rows);
+    cudaMalloc((void**)&dev_X, sizeof(int) * VECTOR_INIT_CAPACITY);
+    cudaMalloc((void**)&dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY);
+    cudaMalloc((void**)&DevCounter, sizeof(int));
 
     cudaMemcpy(dev_Image, ImageData, cols*rows * sizeof(unsigned char), cudaMemcpyHostToDevice);
+    cudaMemcpy(DevCounter, &state, sizeof(int), cudaMemcpyHostToDevice);
 
     dim3 gridSize (ceil(cols / (float)THREAD_DIM), ceil(rows / (float)THREAD_DIM));
     dim3 blockSize (THREAD_DIM, THREAD_DIM);
 
     RingFilterGPU<<<gridSize, blockSize>>>(
                 dev_Image,
-                dev_Result_Image,
+                dev_X,
+                dev_Y,
+                DevCounter,
                 rows,
                 cols,
                 pud,
                 threshold
             );
+    cudaDeviceSynchronize();
 
-    unsigned char* ResultImage = (unsigned char*)malloc(cols * rows * sizeof(unsigned char));
-    cudaMemcpy(ResultImage, dev_Result_Image, sizeof(unsigned char) * cols * rows, cudaMemcpyDeviceToHost);
+    int* res_X = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
+    int* res_Y = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
+    int* counter = (int*)malloc(sizeof(int));
+    cudaMemcpy(res_X, dev_X, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaMemcpy(res_Y, dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaMemcpy(counter, DevCounter, sizeof(int), cudaMemcpyDeviceToHost);
+
+    ContForPoints* cont = (ContForPoints*)malloc(sizeof(ContForPoints));
+    cont->vectorX = res_X;
+    cont->vectorY = res_Y;
+    cont->counter = counter;
 
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
@@ -91,11 +120,14 @@ extern "C" unsigned char* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     cudaEventDestroy( start );
     cudaEventDestroy( stop  );
 
-//    free(ResultImage);
-    cudaFree(dev_Result_Image);
     cudaFree(dev_Image);
+    cudaFree(dev_X);
+    cudaFree(dev_Y);
+    cudaFree(DevCounter);
+//    free(res_X);
+//    free(res_Y);
+//    free(counter);
 
-    return ResultImage;
+    return cont;
 }
-
 

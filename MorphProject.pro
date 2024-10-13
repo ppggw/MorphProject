@@ -10,7 +10,6 @@ SOURCES += \
         observer.cpp \
 
 HEADERS += \
-    cuda_calc.cu \
     INIReader.h \
     cuda_header.h \
     detector.h \
