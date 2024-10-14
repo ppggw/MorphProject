@@ -13,9 +13,16 @@
 
 __device__ int mLock = 0;
 
+
 __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vectorY,
                               int* counter, int rows, int cols, int pud, int threshold)
 {
+    __shared__ int block_count;
+    __shared__ int block_mutex;
+    __shared__ int block_vectorX[THREAD_DIM * THREAD_DIM];
+    __shared__ int block_vectorY[THREAD_DIM * THREAD_DIM];
+    __shared__ int im_values[THREAD_DIM * THREAD_DIM];
+
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -27,6 +34,11 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
     )
     {
         return;
+    }
+    //инициализация счетчика
+    if(threadIdx.x == 0){
+        block_count = 0;
+        block_mutex = 0;
     }
 
     float M = 0;
@@ -43,11 +55,47 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
     M = M/( (4*pud + 2) + (4*pud - 4) );
 
     if(abs(ImageData[y * cols + x] - M) >= threshold){
+//        bool blocked = true;
+//           while(blocked) {
+//               if(0 == atomicCAS(&mLock, 0, 1)) {
+//                   vectorX[*counter] = x;
+//                   vectorY[*counter] = y;
+//                   *counter+=1;
+//                   atomicExch(&mLock, 0);
+//                   blocked = false;
+//               }
+//        }
+
+        bool blocked = true;
+        while(blocked) {
+            if(0 == atomicCAS(&block_mutex, 0, 1)) {
+                atomicExch(&block_vectorX[block_count], x);
+                atomicExch(&block_vectorY[block_count], y);
+                atomicExch(&im_values[block_count], ImageData[y * cols + x]);
+                atomicAdd(&block_count, 1);
+
+                atomicExch(&block_mutex, 0);
+                blocked = false;
+            }
+        }
+    }
+    __syncthreads();
+    //дальше пусть каждая стартовая нить блока обработает массив и найдем максимум
+    if(threadIdx.x == 0 && threadIdx.y == 0 && block_count != 0){
+        int max = im_values[0];
+        int index = 0;
+        for(int i = 1; i != block_count; i++){
+            if (im_values[i] > max){
+                max = im_values[i];
+                index = i;
+            }
+        }
+        //запись
         bool blocked = true;
         while(blocked) {
             if(0 == atomicCAS(&mLock, 0, 1)) {
-                vectorX[*counter] = x;
-                vectorY[*counter] = y;
+                vectorX[*counter] = block_vectorX[index];
+                vectorY[*counter] = block_vectorY[index];
                 *counter+=1;
                 atomicExch(&mLock, 0);
                 blocked = false;
@@ -71,8 +119,8 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     unsigned char *dev_Image;
     int* dev_X;
     int* dev_Y;
-
     int* DevCounter;
+
     int state = 0;
 
     cudaMalloc((void**)&dev_Image, sizeof(unsigned char) * cols * rows);
@@ -101,9 +149,15 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     int* res_X = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* res_Y = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* counter = (int*)malloc(sizeof(int));
-    cudaMemcpy(res_X, dev_X, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaMemcpy(res_Y, dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaMemcpy(counter, DevCounter, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaError_t error1 = cudaMemcpy(res_X, dev_X, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaError_t error2 = cudaMemcpy(res_Y, dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaError_t error3 = cudaMemcpy(counter, DevCounter, sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaDeviceSynchronize();
+
+//    for(int i =0; i != *counter; i++){
+//        std::cout << res_X[i] << " " << res_Y[i] << "\n";
+//    }
 
     ContForPoints* cont = (ContForPoints*)malloc(sizeof(ContForPoints));
     cont->vectorX = res_X;
@@ -124,9 +178,6 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     cudaFree(dev_X);
     cudaFree(dev_Y);
     cudaFree(DevCounter);
-//    free(res_X);
-//    free(res_Y);
-//    free(counter);
 
     return cont;
 }
