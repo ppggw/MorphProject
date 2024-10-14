@@ -4,7 +4,7 @@
 #define THREAD_DIM 32//размер 1024, если брать квадратный блок то 32 на 32 нитей в блоке
 #define NUM_STREAMS 32
 
-#define VECTOR_INIT_CAPACITY 200
+#define VECTOR_INIT_CAPACITY 5000
 
 typedef struct ContForPoints_
 {

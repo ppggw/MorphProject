@@ -80,7 +80,7 @@ void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image){
         for(std::vector<Local_Point>::iterator j = copy.begin(); j != copy.end(); ++j){
         if(j->down == false && i->down == false && i->p != j->p){
             if( (j->p.x > i->p.x-NMSwindow && j->p.x < i->p.x+NMSwindow) && (j->p.y > i->p.y-NMSwindow && j->p.y < i->p.y+NMSwindow) ){
-                if(image.at<uchar>(i->p) >= image.at<uchar>(j->p)){
+                if(image.at<uchar>(i->p) <= image.at<uchar>(j->p)){
                         for_delete.push_back(j->p);
                         j->down = true;
                     }
@@ -172,8 +172,6 @@ cv::Rect Detector::getMask(int cols, int rows, cv::Point p, int width){
 
 
 void Detector::getCPUfilteredPoints(const cv::Mat& GrayImage, std::vector<cv::Point>& points){
-    auto start = std::chrono::high_resolution_clock::now();
-
     const int num_of_threads = points.size(); // оптимальная работа моих алгоритмов с максимальным числом потоков
     if(points.size() != 0){
         std::vector<std::thread> threads;
@@ -204,22 +202,37 @@ void Detector::getCPUfilteredPoints(const cv::Mat& GrayImage, std::vector<cv::Po
             counter++;
         }
     }
-
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    qDebug() << "Время распознавания по кольцу, строке и столбцу = " <<duration.count();
 }
 
 
 void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
-    std::vector<cv::Point> find_points = getGPUfilteredPoints(GrayImage);
-    NMS(find_points, GrayImage);
-    getCPUfilteredPoints(GrayImage, find_points);
+    ContForPoints* cont = GPUCalc((unsigned char*)GrayImage.data, GrayImage.rows, GrayImage.cols, PUD, DELTA_INTENS);
+    free(cont);
+//    auto startGPU = std::chrono::high_resolution_clock::now();
+//    std::vector<cv::Point> find_points = getGPUfilteredPoints(GrayImage);
+//    auto endGPU = std::chrono::high_resolution_clock::now();
+//    auto durationGPU = std::chrono::duration_cast<std::chrono::milliseconds>(endGPU - startGPU);
+//    qDebug() << "Время распознавания GPU и NMS в ядре = " <<durationGPU.count();
 
-    obs.ProcessPoints(find_points);
-    obs.drawObjects(ColorImage);
 
-    for(auto& p : find_points){
-        cv::circle(ColorImage, p, 3, cv::Scalar(0,0,255));
-    }
+    //де-факто не нужно, тк НМС 32х32 уже делается в ядре
+//    auto startNMS = std::chrono::high_resolution_clock::now();
+//    NMS(find_points, GrayImage);
+//    auto endNMS= std::chrono::high_resolution_clock::now();
+//    auto durationNMS = std::chrono::duration_cast<std::chrono::milliseconds>(endNMS - startNMS);
+//    qDebug() << "Время NMS на CPU = " <<durationNMS.count();
+
+//    auto startCPUFilter = std::chrono::high_resolution_clock::now();
+//    getCPUfilteredPoints(GrayImage, find_points);
+//    auto endCPUFilter = std::chrono::high_resolution_clock::now();
+//    auto durationCPUFilter = std::chrono::duration_cast<std::chrono::milliseconds>(endCPUFilter - startCPUFilter);
+//    qDebug() << "Время фильтрации по кольцу = " <<durationCPUFilter.count();
+
+
+//    obs.ProcessPoints(find_points);
+//    obs.drawObjects(ColorImage);
+
+//    for(auto& p : find_points){
+//        cv::circle(ColorImage, p, 3, cv::Scalar(0,0,255));
+//    }
 }
