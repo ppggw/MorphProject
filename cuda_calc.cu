@@ -13,12 +13,13 @@
 
 __device__ int mLock = 0;
 
-__device__ int counter_for_each_block[16][20];
+//__device__ int counter_for_each_block[16][20];
 
-__device__ int mutex_for_each_block[16][20];
+//__device__ int mutex_for_each_block[16][20];
 
 
 __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vectorY,
+                              int* counter_for_each_block, int * mutex_for_each_block,
                               int* global_counter, int rows, int cols, int pud, int threshold)
 {
     __shared__ int block_vectorX[THREAD_DIM * THREAD_DIM];
@@ -37,9 +38,10 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
     {
         return;
     }
+
     if(threadIdx.x == 0){
-        counter_for_each_block[blockIdx.y][blockIdx.x] = 0;
-        mutex_for_each_block[blockIdx.y][blockIdx.x] = 0;
+        counter_for_each_block[blockIdx.y + blockIdx.x] = 0;
+        mutex_for_each_block[blockIdx.y + blockIdx.x] = 0;
     }
 
     float M = 0;
@@ -56,25 +58,29 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
     M = M/( (4*pud + 2) + (4*pud - 4) );
 
     if(abs(ImageData[y * cols + x] - M) >= threshold){
+//        atomicExch(&block_vectorX[ counter_for_each_block[blockIdx.y + blockIdx.x] ], x);
+//        atomicExch(&block_vectorY[ counter_for_each_block[blockIdx.y + blockIdx.x] ], y);
+//        atomicExch(&im_values[ counter_for_each_block[blockIdx.y + blockIdx.x] ], ImageData[y * cols + x]);
+//        atomicAdd(&counter_for_each_block[blockIdx.y + blockIdx.x], 1);
         bool blocked = true;
         while(blocked) {
-            if(0 == atomicCAS(&mutex_for_each_block[blockIdx.y][blockIdx.x], 0, 1)){
-                atomicExch(&block_vectorX[ counter_for_each_block[blockIdx.y][blockIdx.x] ], x);
-                atomicExch(&block_vectorY[ counter_for_each_block[blockIdx.y][blockIdx.x] ], y);
-                atomicExch(&im_values[ counter_for_each_block[blockIdx.y][blockIdx.x] ], ImageData[y * cols + x]);
-                atomicAdd(&counter_for_each_block[blockIdx.y][blockIdx.x] , 1);
+            if(0 == atomicCAS(&mutex_for_each_block[blockIdx.y + blockIdx.x], 0, 1)){
+                atomicExch(&block_vectorX[ counter_for_each_block[blockIdx.y + blockIdx.x] ], x);
+                atomicExch(&block_vectorY[ counter_for_each_block[blockIdx.y + blockIdx.x] ], y);
+                atomicExch(&im_values[ counter_for_each_block[blockIdx.y + blockIdx.x] ], ImageData[y * cols + x]);
+                atomicAdd(&counter_for_each_block[blockIdx.y + blockIdx.x], 1);
 
-                atomicExch(&mutex_for_each_block[blockIdx.y][blockIdx.x], 0);
+                atomicExch(&mutex_for_each_block[blockIdx.y + blockIdx.x], 0);
                 blocked = false;
             }
         }
     }
     __syncthreads();
     //дальше пусть каждая стартовая нить блока обработает массив и найдем максимум
-    if(threadIdx.x == 0 && threadIdx.y == 0 && counter_for_each_block[blockIdx.y][blockIdx.x] != 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0 && counter_for_each_block[blockIdx.y + blockIdx.x] != 0){
         int max = im_values[0];
         int index = 0;
-        for(int i = 1; i != counter_for_each_block[blockIdx.y][blockIdx.x]; i++){
+        for(int i = 1; i != counter_for_each_block[blockIdx.y + blockIdx.x]; i++){
             if (im_values[i] > max){
                 max = im_values[i];
                 index = i;
@@ -111,12 +117,18 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     int* dev_Y;
     int* devCounterGlobal;
 
+    int* devCounterForEachBlock;
+    int* devMutexForEachBlock;
+
     int state = 0;
 
     cudaMalloc((void**)&dev_Image, sizeof(unsigned char) * cols * rows);
     cudaMalloc((void**)&dev_X, sizeof(int) * VECTOR_INIT_CAPACITY);
     cudaMalloc((void**)&dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY);
     cudaMalloc((void**)&devCounterGlobal, sizeof(int));
+
+    cudaMalloc((void**)&devCounterForEachBlock, sizeof(int) * 16 * 20);
+    cudaMalloc((void**)&devMutexForEachBlock, sizeof(int) * 16 * 20);
 
     cudaMemcpy(dev_Image, ImageData, cols*rows * sizeof(unsigned char), cudaMemcpyHostToDevice);
     cudaMemcpy(devCounterGlobal, &state, sizeof(int), cudaMemcpyHostToDevice);
@@ -128,6 +140,8 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
                 dev_Image,
                 dev_X,
                 dev_Y,
+                devCounterForEachBlock,
+                devMutexForEachBlock,
                 devCounterGlobal,
                 rows,
                 cols,
@@ -168,6 +182,8 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     cudaFree(dev_X);
     cudaFree(dev_Y);
     cudaFree(devCounterGlobal);
+    cudaFree(devCounterForEachBlock);
+    cudaFree(devMutexForEachBlock);
 
     return cont;
 }

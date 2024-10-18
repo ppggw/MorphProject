@@ -217,11 +217,11 @@ void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
 
 
     //де-факто не нужно, тк НМС 32х32 уже делается в ядре
-    auto startNMS = std::chrono::high_resolution_clock::now();
-    NMS(find_points, GrayImage);
-    auto endNMS= std::chrono::high_resolution_clock::now();
-    auto durationNMS = std::chrono::duration_cast<std::chrono::milliseconds>(endNMS - startNMS);
-    qDebug() << "Время NMS на CPU = " <<durationNMS.count();
+//    auto startNMS = std::chrono::high_resolution_clock::now();
+//    NMS(find_points, GrayImage);
+//    auto endNMS= std::chrono::high_resolution_clock::now();
+//    auto durationNMS = std::chrono::duration_cast<std::chrono::milliseconds>(endNMS - startNMS);
+//    qDebug() << "Время NMS на CPU = " <<durationNMS.count();
 
     auto startCPUFilter = std::chrono::high_resolution_clock::now();
     getCPUfilteredPoints(GrayImage, find_points);
