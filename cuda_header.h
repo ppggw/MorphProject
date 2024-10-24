@@ -13,6 +13,6 @@ typedef struct ContForPoints_
     int* counter;
 } ContForPoints;
 
-extern "C" ContForPoints* GPUCalc(unsigned char*, int, int, int, int);
+extern "C" ContForPoints* GPUCalc(unsigned char*, int, int, int, int, int, float);
 
 #endif // CUDA_HEADER_H

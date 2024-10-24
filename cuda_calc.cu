@@ -13,10 +13,6 @@
 
 __device__ int mLock = 0;
 
-//__device__ int counter_for_each_block[16][20];
-
-//__device__ int mutex_for_each_block[16][20];
-
 
 __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vectorY,
                               int* counter_for_each_block, int * mutex_for_each_block,
@@ -39,7 +35,7 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
         return;
     }
 
-    if(threadIdx.x == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0){
         counter_for_each_block[blockIdx.y + blockIdx.x] = 0;
         mutex_for_each_block[blockIdx.y + blockIdx.x] = 0;
     }
@@ -58,16 +54,12 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
     M = M/( (4*pud + 2) + (4*pud - 4) );
 
     if(abs(ImageData[y * cols + x] - M) >= threshold){
-//        atomicExch(&block_vectorX[ counter_for_each_block[blockIdx.y + blockIdx.x] ], x);
-//        atomicExch(&block_vectorY[ counter_for_each_block[blockIdx.y + blockIdx.x] ], y);
-//        atomicExch(&im_values[ counter_for_each_block[blockIdx.y + blockIdx.x] ], ImageData[y * cols + x]);
-//        atomicAdd(&counter_for_each_block[blockIdx.y + blockIdx.x], 1);
         bool blocked = true;
         while(blocked) {
             if(0 == atomicCAS(&mutex_for_each_block[blockIdx.y + blockIdx.x], 0, 1)){
-                atomicExch(&block_vectorX[ counter_for_each_block[blockIdx.y + blockIdx.x] ], x);
-                atomicExch(&block_vectorY[ counter_for_each_block[blockIdx.y + blockIdx.x] ], y);
-                atomicExch(&im_values[ counter_for_each_block[blockIdx.y + blockIdx.x] ], ImageData[y * cols + x]);
+                block_vectorX[ counter_for_each_block[blockIdx.y + blockIdx.x] ] = x;
+                block_vectorY[ counter_for_each_block[blockIdx.y + blockIdx.x] ] = y;
+                im_values[ counter_for_each_block[blockIdx.y + blockIdx.x] ] = ImageData[y * cols + x];
                 atomicAdd(&counter_for_each_block[blockIdx.y + blockIdx.x], 1);
 
                 atomicExch(&mutex_for_each_block[blockIdx.y + blockIdx.x], 0);
@@ -102,7 +94,74 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
 }
 
 
-extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, int pud, int threshold){
+__global__ void DispRingFilterGPU(unsigned char* ImageData, int* vectorObjectX, int* vectorObjectY,
+                                  int* counterObject, int* vectorResultX, int* vectorResultY, int* counterFiltered,
+                                  int widthOfWindow, float SKO_Porog, int cols, int rows){
+    if( (threadIdx.x + threadIdx.y*THREAD_DIM) >= *counterObject){
+        return;
+    }
+
+    __shared__ int mutex;
+
+    if(threadIdx.x == 0 && threadIdx.y == 0){
+        mutex = 0;
+    }
+
+    int pointX = vectorObjectX[threadIdx.x + threadIdx.y * THREAD_DIM];
+    int pointY = vectorObjectY[threadIdx.x + threadIdx.y * THREAD_DIM];
+
+    if(pointX < widthOfWindow/2 || cols - pointX < widthOfWindow/2 ||
+       pointY < widthOfWindow/2 || rows - pointY < widthOfWindow/2){
+        return;
+    }
+
+    int M = 0;
+    for(int l = -widthOfWindow/2+1; l != widthOfWindow/2; l++){
+        M += (int)ImageData[(pointY - widthOfWindow/2) * cols + pointX + l];
+        M += (int)ImageData[(pointY + widthOfWindow/2) * cols + pointX + l];
+    }
+
+    for(int l = -widthOfWindow/2+1; l != widthOfWindow/2; l++){
+        M += (int)ImageData[(pointY + l) * cols + pointX - widthOfWindow/2];
+        M += (int)ImageData[(pointY + l) * cols + pointX + widthOfWindow/2];
+    }
+
+    M = M/( (2*widthOfWindow + 2) + (2*widthOfWindow - 2));
+
+    float SumForSKORing = 0;
+    for(int l = -widthOfWindow/2; l != widthOfWindow/2 + 1; l++){
+        SumForSKORing += ((int)ImageData[(pointY - widthOfWindow/2) * cols + pointX + l] - M) * ((int)ImageData[(pointY - widthOfWindow/2) * cols + pointX + l] - M);
+        SumForSKORing += ((int)ImageData[(pointY + widthOfWindow/2) * cols + pointX + l] - M) * ((int)ImageData[(pointY + widthOfWindow/2) * cols + pointX + l] - M);
+    }
+
+    for(int l = -widthOfWindow/2 + 1; l != widthOfWindow/2; l++){
+        SumForSKORing += ((int)ImageData[(pointY + l) * cols + pointX - widthOfWindow/2] - M) * ((int)ImageData[(pointY + l) * cols + pointX - widthOfWindow/2] - M);
+        SumForSKORing += ((int)ImageData[(pointY + l) * cols + pointX + widthOfWindow/2] - M) * ((int)ImageData[(pointY + l) * cols + pointX + widthOfWindow/2] - M);
+    }
+
+    SumForSKORing = SumForSKORing/( (2*widthOfWindow + 2) + (2*widthOfWindow - 2));
+    SumForSKORing = sqrt(SumForSKORing);
+
+    if((int)ImageData[pointY * cols + pointX] >= (M + SKO_Porog * SumForSKORing) ){
+        bool blocked = true;
+        while(blocked) {
+            if(0 == atomicCAS(&mutex, 0, 1)) {
+                vectorResultX[*counterFiltered] = pointX;
+                vectorResultY[*counterFiltered] = pointY;
+                *counterFiltered+=1;
+
+                atomicExch(&mutex, 0);
+                blocked = false;
+            }
+        }
+    }
+
+    __syncthreads();
+}
+
+
+extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, int pud, int threshold,
+                                  int widthForFilter, float SKO_Porog){
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -115,8 +174,7 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     unsigned char *dev_Image;
     int* dev_X;
     int* dev_Y;
-    int* devCounterGlobal;
-
+    int* dev_CounterGlobal;
     int* devCounterForEachBlock;
     int* devMutexForEachBlock;
 
@@ -125,13 +183,12 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     cudaMalloc((void**)&dev_Image, sizeof(unsigned char) * cols * rows);
     cudaMalloc((void**)&dev_X, sizeof(int) * VECTOR_INIT_CAPACITY);
     cudaMalloc((void**)&dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY);
-    cudaMalloc((void**)&devCounterGlobal, sizeof(int));
-
+    cudaMalloc((void**)&dev_CounterGlobal, sizeof(int));
     cudaMalloc((void**)&devCounterForEachBlock, sizeof(int) * 16 * 20);
     cudaMalloc((void**)&devMutexForEachBlock, sizeof(int) * 16 * 20);
 
     cudaMemcpy(dev_Image, ImageData, cols*rows * sizeof(unsigned char), cudaMemcpyHostToDevice);
-    cudaMemcpy(devCounterGlobal, &state, sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_CounterGlobal, &state, sizeof(int), cudaMemcpyHostToDevice);
 
     dim3 gridSize (ceil(cols / (float)THREAD_DIM), ceil(rows / (float)THREAD_DIM)); // x = 20 y = 16
     dim3 blockSize (THREAD_DIM, THREAD_DIM);
@@ -142,7 +199,7 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
                 dev_Y,
                 devCounterForEachBlock,
                 devMutexForEachBlock,
-                devCounterGlobal,
+                dev_CounterGlobal,
                 rows,
                 cols,
                 pud,
@@ -150,18 +207,44 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
             );
     cudaDeviceSynchronize();
 
+//    int* res_X = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
+//    int* res_Y = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
+//    int* res_counter = (int*)malloc(sizeof(int));
+//    cudaError_t error1 = cudaMemcpy(res_X, dev_X, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+//    cudaError_t error2 = cudaMemcpy(res_Y, dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+//    cudaError_t error3 = cudaMemcpy(res_counter, dev_CounterGlobal, sizeof(int), cudaMemcpyDeviceToHost);
+
+    //filterDisp part
+    int* dev_X_filtered;
+    int* dev_Y_filtered;
+    int* dev_CounterFiltered;
+    cudaMalloc((void**)&dev_X_filtered, sizeof(int) * VECTOR_INIT_CAPACITY);
+    cudaMalloc((void**)&dev_Y_filtered, sizeof(int) * VECTOR_INIT_CAPACITY);
+    cudaMalloc((void**)&dev_CounterFiltered, sizeof(int));
+
+    cudaMemcpy(dev_CounterFiltered, &state, sizeof(int), cudaMemcpyHostToDevice);
+
+    DispRingFilterGPU<<<dim3(1,1), blockSize>>>(
+                      dev_Image,
+                      dev_X,
+                      dev_Y,
+                      dev_CounterGlobal,
+                      dev_X_filtered,
+                      dev_Y_filtered,
+                      dev_CounterFiltered,
+                      widthForFilter,
+                      SKO_Porog,
+                      cols,
+                      rows
+                  );
+    cudaDeviceSynchronize();
+
     int* res_X = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* res_Y = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* res_counter = (int*)malloc(sizeof(int));
-    cudaError_t error1 = cudaMemcpy(res_X, dev_X, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaError_t error2 = cudaMemcpy(res_Y, dev_Y, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaError_t error3 = cudaMemcpy(res_counter, devCounterGlobal, sizeof(int), cudaMemcpyDeviceToHost);
-
-    cudaDeviceSynchronize();
-
-//    for(int i =0; i != *counter; i++){
-//        std::cout << res_X[i] << " " << res_Y[i] << "\n";
-//    }
+    cudaError_t error1 = cudaMemcpy(res_X, dev_X_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaError_t error2 = cudaMemcpy(res_Y, dev_Y_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
+    cudaError_t error3 = cudaMemcpy(res_counter, dev_CounterFiltered, sizeof(int), cudaMemcpyDeviceToHost);
 
     ContForPoints* cont = (ContForPoints*)malloc(sizeof(ContForPoints));
     cont->vectorX = res_X;
@@ -181,9 +264,13 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     cudaFree(dev_Image);
     cudaFree(dev_X);
     cudaFree(dev_Y);
-    cudaFree(devCounterGlobal);
+    cudaFree(dev_CounterGlobal);
     cudaFree(devCounterForEachBlock);
     cudaFree(devMutexForEachBlock);
+
+    cudaFree(dev_X_filtered);
+    cudaFree(dev_Y_filtered);
+    cudaFree(dev_CounterFiltered);
 
     return cont;
 }
