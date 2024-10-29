@@ -102,7 +102,7 @@ void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
     NMS(find_points, GrayImage);
     auto endNMS = std::chrono::high_resolution_clock::now();
     auto durationNMS = std::chrono::duration_cast<std::chrono::milliseconds>(endNMS - startNMS);
-    qDebug() << "Время работы NMS на CPU = " <<durationNMS.count();
+//    qDebug() << "Время работы NMS на CPU = " <<durationNMS.count();
 
     obs.ProcessPoints(find_points);
     obs.drawObjects(ColorImage);

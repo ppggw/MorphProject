@@ -34,10 +34,10 @@ int main(int argc, char** argv)
 //        cv::waitKey(1);
 //    }
 
-    std::string path_to_ini = "E:/Qt/Projects/MorphProject/param_mine.ini";
+    std::string path_to_ini = "/home/nikita/MorphProject/param_mine.ini";
     Detector det(path_to_ini);
 
-    QString path = "E:/studvesna/";
+    QString path = "/home/nikita/studvesna/";
     QDir dir(path);
     QStringList images = dir.entryList(QStringList() << "*.png", QDir::Files);
 

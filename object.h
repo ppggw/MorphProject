@@ -17,7 +17,7 @@ private:
 
     int getNumOfPoint();
 public:
-    Object(int N, int NFramesForSeek_) : points(N), NFramesForSeek(NFramesForSeek_){};
+    Object(int N, int NFramesForSeek_): points(N), NFramesForSeek(NFramesForSeek_){};
 
     bool DrawTraekt = false;
 
