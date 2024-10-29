@@ -23,10 +23,13 @@ private:
     int PUD;
     int DELTA_INTENS;
     int SKO_POROG;
+    int NMSwindow;
     Observer obs;
 
     std::vector<cv::Point> getGPUfilteredPoints(const cv::Mat&);
     bool get_ini_params(const std::string&);
+    void NMS(std::vector<cv::Point>&, const cv::Mat&);
+
 public:
     Detector(const std::string&);
 
