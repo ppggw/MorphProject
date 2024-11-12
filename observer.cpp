@@ -29,7 +29,7 @@ bool Observer::get_ini_params(const string& config)
     NFramesForSeek = reader.GetInteger("detector", "NFramesForSeek", -1);
     if(NFramesForSeek == -1){std::cerr << "detector_error!\n"; return 0;}
 
-    WidthOfReg = reader.GetInteger("detector", "WidthForDetector", -1);
+    WidthOfReg = reader.GetInteger("detector", "WidthForTrack", -1);
     if(WidthOfReg == -1){std::cerr << "detector_error!\n"; return 0;}
 
     return 1;
@@ -92,8 +92,6 @@ void Observer::ProcessPoints(std::vector<cv::Point>& find_points){
     static std::vector<cv::Point> previous_points{};
     const int num_of_threads = find_points.size(); // оптимальная работа моих алгоритмов с максимальным числом потоков
 
-    auto start = std::chrono::high_resolution_clock::now();
-
     if(!previous_points.empty() && !find_points.empty()){
         std::vector<std::thread> threads(num_of_threads-1);
 
@@ -126,8 +124,4 @@ void Observer::ProcessPoints(std::vector<cv::Point>& find_points){
 
 
     previous_points = find_points;
-
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    qDebug() << "Время работы трекера  = " <<duration.count();
 }

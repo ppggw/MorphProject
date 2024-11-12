@@ -6,6 +6,7 @@
 #define GRID_SIZE_Y 16
 #define VECTOR_INIT_CAPACITY 600
 
+
 typedef struct ContForPoints_
 {
     int* vectorX;

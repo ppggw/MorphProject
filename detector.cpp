@@ -27,8 +27,8 @@ bool Detector::get_ini_params(const string& config)
     if(DELTA_INTENS == -1){std::cerr << "threshold_values_error!\n"; return 0;}
 
     //windows
-    PUD = reader.GetInteger("windows", "PUD", -1);
-    if(PUD == -1){std::cerr << "windows_error!\n"; return 0;}
+    Width_window_for_Detect = reader.GetInteger("windows", "Width_window_for_Detect", -1);
+    if(Width_window_for_Detect == -1){std::cerr << "windows_error!\n"; return 0;}
 
     NMSwindow = reader.GetInteger("windows", "NMSwindow", -1);
     if(NMSwindow == -1){std::cerr << "windows_error!\n"; return 0;}
@@ -80,7 +80,7 @@ void Detector::NMS(std::vector<cv::Point>& find_points, const cv::Mat& image){
 
 std::vector<cv::Point> Detector::getGPUfilteredPoints(const cv::Mat& GrayImage){
     ContForPoints* cont = GPUCalc((unsigned char*)GrayImage.data, GrayImage.rows,
-                                  GrayImage.cols, PUD, DELTA_INTENS, width_window_for_Ring, SKO_POROG);
+                                  GrayImage.cols, Width_window_for_Detect, DELTA_INTENS, width_window_for_Ring, SKO_POROG);
     std::vector<cv::Point> find_points;
     find_points.reserve(*cont->counter);
     for(int i=0; i != *cont->counter; i++){
@@ -96,7 +96,7 @@ void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
     std::vector<cv::Point> find_points = getGPUfilteredPoints(GrayImage);
     auto endGPU = std::chrono::high_resolution_clock::now();
     auto durationGPU = std::chrono::duration_cast<std::chrono::milliseconds>(endGPU - startGPU);
-    qDebug() << "Время распознавания GPU и NMS в ядре = " <<durationGPU.count();
+//    qDebug() << "Время распознавания GPU и NMS в ядре = " <<durationGPU.count();
 
     auto startNMS = std::chrono::high_resolution_clock::now();
     NMS(find_points, GrayImage);
@@ -104,8 +104,12 @@ void Detector::processImage(const cv::Mat& GrayImage, cv::Mat& ColorImage){
     auto durationNMS = std::chrono::duration_cast<std::chrono::milliseconds>(endNMS - startNMS);
 //    qDebug() << "Время работы NMS на CPU = " <<durationNMS.count();
 
+    auto start = std::chrono::high_resolution_clock::now();
     obs.ProcessPoints(find_points);
     obs.drawObjects(ColorImage);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+//    qDebug() << "Время работы трекера  = " <<duration.count();
 
     for(auto& p : find_points){
         cv::circle(ColorImage, p, 3, cv::Scalar(0,0,255));

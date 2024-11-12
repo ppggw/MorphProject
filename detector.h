@@ -20,7 +20,7 @@ class Detector
 {
 private:
     int width_window_for_Ring;
-    int PUD;
+    int Width_window_for_Detect;
     int DELTA_INTENS;
     int SKO_POROG;
     int NMSwindow;
