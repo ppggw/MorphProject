@@ -92,19 +92,11 @@ void Observer::ProcessPoints(std::vector<cv::Point>& find_points){
     static std::vector<cv::Point> previous_points{};
     const int num_of_threads = find_points.size(); // оптимальная работа моих алгоритмов с максимальным числом потоков
 
-    if(!previous_points.empty() && !find_points.empty()){
-        std::vector<std::thread> threads(num_of_threads-1);
-
-        for(int i=0; i != num_of_threads-1; i++){
-            threads[i] = std::thread(&Observer::ProcessPoint, this, std::ref(previous_points), find_points[i]);
-        }
-        ProcessPoint(previous_points, find_points[num_of_threads-1]);
-
-        for(auto& entry : threads){
-            entry.join();
+    if(!previous_points.empty()){
+        for(int i =0; i != find_points.size(); i++){
+            ProcessPoint(previous_points, find_points[i]);
         }
     }
-
     for(auto ob = objects.begin(); ob != objects.end();){
         bool isCalled = ob->CheckAddCalled();
         if(isCalled){
@@ -121,7 +113,6 @@ void Observer::ProcessPoints(std::vector<cv::Point>& find_points){
             }
         }
     }
-
 
     previous_points = find_points;
 }

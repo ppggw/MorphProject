@@ -7,6 +7,17 @@
 #include <iostream>
 
 
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess)
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
+
 __device__ int mLock = 0;
 
 
@@ -60,7 +71,6 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
                 counter_for_each_block[blockIdx.y * GRID_SIZE_X + blockIdx.x] += 1;
 
                 atomicExch(&mutex_for_each_block[blockIdx.y * GRID_SIZE_X + blockIdx.x], 0);
-                __threadfence();
                 blocked = false;
             }
         }
@@ -88,8 +98,6 @@ __global__ void RingFilterGPU(unsigned char* ImageData, int* vectorX, int* vecto
                     *global_counter+=1;
                 }
                 atomicExch(&mLock, 0);
-                __threadfence();
-
                 blocked = false;
             }
         }
@@ -149,8 +157,6 @@ __global__ void DispRingFilterGPU(unsigned char* ImageData, int* vectorObjectX, 
                 *counterFiltered+=1;
 
                 atomicExch(&mutex, 0);
-                __threadfence();
-
                 blocked = false;
             }
         }
@@ -247,9 +253,9 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
     int* res_X = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* res_Y = (int*)malloc(sizeof(int) * VECTOR_INIT_CAPACITY);
     int* res_counter = (int*)malloc(sizeof(int));
-    cudaError_t error1 = cudaMemcpy(res_X, dev_X_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaError_t error2 = cudaMemcpy(res_Y, dev_Y_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost);
-    cudaError_t error3 = cudaMemcpy(res_counter, dev_CounterFiltered, sizeof(int), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(res_X, dev_X_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(res_Y, dev_Y_filtered, sizeof(int) * VECTOR_INIT_CAPACITY, cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(res_counter, dev_CounterFiltered, sizeof(int), cudaMemcpyDeviceToHost));
 
     ContForPoints* cont = (ContForPoints*)malloc(sizeof(ContForPoints));
     cont->vectorX = res_X;
@@ -261,7 +267,7 @@ extern "C" ContForPoints* GPUCalc(unsigned char* ImageData, int rows, int cols, 
 
     float elapsedTime;
     cudaEventElapsedTime(&elapsedTime, start, stop);
-//    printf("Time of CUDA Work: %3.1f ms\n", elapsedTime);
+    printf("Time of CUDA Work: %3.1f ms\n", elapsedTime);
 
     cudaEventDestroy( start );
     cudaEventDestroy( stop  );
